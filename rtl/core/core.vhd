@@ -133,6 +133,8 @@ begin
       i_clk => i_clk,
       i_rst => i_rst,
 
+      i_invalidate => '0',  -- TODO(m): Implement me!
+
       i_instr_cyc => s_instr_cyc,
       i_instr_stb => s_instr_stb,
       i_instr_adr => s_instr_adr,
