@@ -36,6 +36,7 @@ SRCS += \
     $(TEST_PATH)/fpu_tb.vhd \
     $(TEST_PATH)/ftoi_tb.vhd \
     $(TEST_PATH)/funp_tb.vhd \
+    $(TEST_PATH)/icache_tb.vhd \
     $(TEST_PATH)/itof_clz_and_left_shift_tb.vhd \
     $(TEST_PATH)/itof_tb.vhd \
     $(TEST_PATH)/mem_arbiter_tb.vhd \
@@ -64,6 +65,7 @@ TESTS += \
     fpu_tb \
     ftoi_tb \
     funp_tb \
+    icache_tb \
     itof_clz_and_left_shift_tb \
     itof_tb \
     mem_arbiter_tb \

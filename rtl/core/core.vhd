@@ -134,6 +134,7 @@ begin
     port map (
       i_clk => i_clk,
       i_rst => i_rst,
+      i_invalidate => '0',  -- TODO(m): Implement me!
 
       -- From instruction fetch.
       i_instr_cyc => s_instr_cyc,
