@@ -33,38 +33,59 @@ architecture behavioral of core_tb is
   signal s_clk : std_logic;
   signal s_rst : std_logic;
 
-  -- Memory interface.
-  signal s_wb_cyc : std_logic;
-  signal s_wb_stb : std_logic;
-  signal s_wb_adr : std_logic_vector(C_WORD_SIZE-1 downto 2);
-  signal s_wb_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
-  signal s_wb_we : std_logic;
-  signal s_wb_sel : std_logic_vector(C_WORD_SIZE/8-1 downto 0);
+  -- Instr-to-mem interface.
+  signal s_instr_cyc : std_logic;
+  signal s_instr_stb : std_logic;
+  signal s_instr_adr : std_logic_vector(C_WORD_SIZE-1 downto 2);
 
-  signal s_mem_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
-  signal s_mem_ack : std_logic;
-  signal s_mem_stall : std_logic;
-  signal s_mem_err : std_logic;
+  -- Mem-to-instr interface.
+  signal s_instr_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
+  signal s_instr_ack : std_logic;
+  signal s_instr_stall : std_logic;
+  signal s_instr_err : std_logic;
+
+  -- Data-to-mem interface.
+  signal s_data_cyc : std_logic;
+  signal s_data_stb : std_logic;
+  signal s_data_adr : std_logic_vector(C_WORD_SIZE-1 downto 2);
+  signal s_data_dat_w : std_logic_vector(C_WORD_SIZE-1 downto 0);
+  signal s_data_we : std_logic;
+  signal s_data_sel : std_logic_vector(C_WORD_SIZE/8-1 downto 0);
+
+  -- Mem-to-data interface.
+  signal s_data_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
+  signal s_data_ack : std_logic;
+  signal s_data_stall : std_logic;
+  signal s_data_err : std_logic;
 
   -- Debug trace interface.
   signal s_debug_trace : T_DEBUG_TRACE;
 begin
-  core_0: entity work.core_1mem
+  core_0: entity work.core
     port map (
       i_clk => s_clk,
       i_rst => s_rst,
 
-      -- Memory interface.
-      o_mem_cyc => s_wb_cyc,
-      o_mem_stb => s_wb_stb,
-      o_mem_adr => s_wb_adr,
-      o_mem_dat => s_wb_dat,
-      o_mem_we => s_wb_we,
-      o_mem_sel => s_wb_sel,
-      i_mem_dat => s_mem_dat,
-      i_mem_ack => s_mem_ack,
-      i_mem_stall => s_mem_stall,
-      i_mem_err => s_mem_err,
+      -- Instruction interface.
+      o_imem_cyc => s_instr_cyc,
+      o_imem_stb => s_instr_stb,
+      o_imem_adr => s_instr_adr,
+      i_imem_dat => s_instr_dat,
+      i_imem_ack => s_instr_ack,
+      i_imem_stall => s_instr_stall,
+      i_imem_err => s_instr_err,
+
+      -- Data interface.
+      o_dmem_cyc => s_data_cyc,
+      o_dmem_stb => s_data_stb,
+      o_dmem_adr => s_data_adr,
+      o_dmem_dat => s_data_dat_w,
+      o_dmem_we => s_data_we,
+      o_dmem_sel => s_data_sel,
+      i_dmem_dat => s_data_dat,
+      i_dmem_ack => s_data_ack,
+      i_dmem_stall => s_data_stall,
+      i_dmem_err => s_data_err,
 
       -- Debug trace interface.
       o_debug_trace => s_debug_trace
@@ -83,9 +104,11 @@ begin
 
     -- Variables for the memory interface.
     variable v_mem_idx : integer;
-    variable v_data : std_logic_vector(C_WORD_SIZE-1 downto 0);
+    variable v_instr_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
+    variable v_instr_ack : std_logic;
     variable v_write_mask : std_logic_vector(C_WORD_SIZE-1 downto 0);
-    variable v_ack : std_logic;
+    variable v_data_dat : std_logic_vector(C_WORD_SIZE-1 downto 0);
+    variable v_data_ack : std_logic;
 
     -- How many CPU cycles should we simulate?
     constant C_TEST_CYCLES : integer := 20000000;
@@ -151,7 +174,8 @@ begin
 
     -- Read the program to run from the binary file core_tb_prg.bin.
     file_open(f_char_file, "out/core_tb_prg.bin");
-    v_mem_idx := to_integer(unsigned(read_word(f_char_file)))/4;  -- Fist word = program start.
+    -- v_mem_idx := to_integer(unsigned(read_word(f_char_file)))/4;  -- Fist word = program start.
+    v_mem_idx := 128;  -- Starting address is 0x00000200 (/4)
     while not endfile(f_char_file) loop
       v_mem_array(v_mem_idx) := read_word(f_char_file);
       v_mem_idx := v_mem_idx + 1;
@@ -163,11 +187,15 @@ begin
       file_open(f_trace_file, "/tmp/mrisc32_core_tb_trace.bin", WRITE_MODE);
     end if;
 
-    -- Reset the memory signals.
-    s_mem_dat <= (others => '0');
-    s_mem_ack <= '0';
-    s_mem_stall <= '0';
-    s_mem_err <= '0';
+    -- Reset the memory-to-core signals.
+    s_instr_dat <= (others => '0');
+    s_instr_ack <= '0';
+    s_instr_stall <= '0';
+    s_instr_err <= '0';
+    s_data_dat <= (others => '0');
+    s_data_ack <= '0';
+    s_data_stall <= '0';
+    s_data_err <= '0';
 
     -- Start by resetting the core (to have defined signals).
     s_rst <= '1';
@@ -192,31 +220,43 @@ begin
         report "Cycles: " & integer'image(i);
       end if;
 
-      -- We should now have a memory request from the Wishbone interface.
+      -- We should now have memory requests from the Wishbone interfaces.
 
-      -- Read/write data to/from the memory.
-      v_write_mask(31 downto 24) := (others => s_wb_sel(3));
-      v_write_mask(23 downto 16) := (others => s_wb_sel(2));
-      v_write_mask(15 downto 8) := (others => s_wb_sel(1));
-      v_write_mask(7 downto 0) := (others => s_wb_sel(0));
-      v_data := X"00000000";
-      if s_wb_cyc = '1' and s_wb_stb = '1' then
-        v_mem_idx := to_integer(unsigned(s_wb_adr));
+      -- Instruction read from the memory.
+      v_instr_dat := X"00000000";
+      if s_instr_cyc = '1' and s_instr_stb = '1' then
+        v_mem_idx := to_integer(unsigned(s_instr_adr));
         if v_mem_idx = 0 then
           report "Simulation finished after " & integer'image(i) & " cycles.";
           exit;
         elsif (v_mem_idx > 0) and (v_mem_idx < C_MEM_NUM_WORDS) then
-          v_data := v_mem_array(v_mem_idx);
+          v_instr_dat := v_mem_array(v_mem_idx);
         end if;
-        if s_wb_we = '1' then
-          v_data := (v_data and (not v_write_mask)) or (s_wb_dat and v_write_mask);
+        v_instr_ack := '1';
+      else
+        v_instr_ack := '0';
+      end if;
+
+      -- Data read/write from/to the memory.
+      v_write_mask(31 downto 24) := (others => s_data_sel(3));
+      v_write_mask(23 downto 16) := (others => s_data_sel(2));
+      v_write_mask(15 downto 8) := (others => s_data_sel(1));
+      v_write_mask(7 downto 0) := (others => s_data_sel(0));
+      v_data_dat := X"00000000";
+      if s_data_cyc = '1' and s_data_stb = '1' then
+        v_mem_idx := to_integer(unsigned(s_data_adr));
+        if (v_mem_idx >= 0) and (v_mem_idx < C_MEM_NUM_WORDS) then
+          v_data_dat := v_mem_array(v_mem_idx);
+        end if;
+        if s_data_we = '1' then
+          v_data_dat := (v_data_dat and (not v_write_mask)) or (s_data_dat_w and v_write_mask);
           if (v_mem_idx >= 0) and (v_mem_idx < C_MEM_NUM_WORDS) then
-            v_mem_array(v_mem_idx) := v_data;
+            v_mem_array(v_mem_idx) := v_data_dat;
           end if;
         end if;
-        v_ack := '1';
+        v_data_ack := '1';
       else
-        v_ack := '0';
+        v_data_ack := '0';
       end if;
 
       -- Write a recrod to the debug trace file.
@@ -225,12 +265,14 @@ begin
         write_trace(f_trace_file, s_debug_trace);
       end if;
 
-      -- Positive clock flank -> time for us to respond on the Wishbone request.
+      -- Positive clock flank -> time for us to respond on the Wishbone requests.
       s_clk <= '1';
       wait for 1 ns;
 
-      s_mem_dat <= v_data;
-      s_mem_ack <= v_ack;
+      s_instr_dat <= v_instr_dat;
+      s_instr_ack <= v_instr_ack;
+      s_data_dat <= v_data_dat;
+      s_data_ack <= v_data_ack;
 
       -- Tick the clock.
       wait for 4 ns;
