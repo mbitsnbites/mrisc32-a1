@@ -200,6 +200,7 @@ architecture rtl of decode is
   -- Signals for handling discarding of the current operation (i.e. bubble).
   signal s_latched_cancel : std_logic;
   signal s_cancel : std_logic;
+  signal s_is_noop : std_logic;
   signal s_bubble : std_logic;
   signal s_reg_a_required_masked : std_logic;
   signal s_reg_b_required_masked : std_logic;
@@ -274,6 +275,9 @@ begin
   end process;
 
   s_cancel <= i_cancel or s_latched_cancel;
+
+  -- This is a noop if it's a bubble or if we're being cancelled.
+  s_is_noop <= i_bubble or s_cancel;
 
 
   --------------------------------------------------------------------------------------------------
@@ -358,7 +362,7 @@ begin
   -- Determine vector mode.
   s_vector_mode(1) <= i_instr(15) and not (s_is_type_d or s_is_type_e);
   s_vector_mode(0) <= i_instr(14) and s_is_type_a;
-  s_is_vector_op <= '1' when s_vector_mode /= "00" and (i_bubble or s_cancel) = '0' else '0';
+  s_is_vector_op <= '1' when s_vector_mode /= "00" and s_is_noop = '0' else '0';
   s_reg_a_is_vector <= s_is_vector_op and not s_is_mem_op;
   s_reg_b_is_vector <= s_vector_mode(0);
   s_reg_c_is_vector <= s_is_vector_op;
@@ -452,11 +456,11 @@ begin
   --------------------------------------------------------------------------------------------------
 
   -- Unconditional branch: J, JL
-  s_is_unconditional_branch <= (not i_bubble) when s_op_high(5 downto 1) = "11000" else '0';
+  s_is_unconditional_branch <= (not s_is_noop) when s_op_high(5 downto 1) = "11000" else '0';
   s_is_link_branch <= s_is_unconditional_branch and s_op_high(0);
 
   -- Conditional branch: B[cc]
-  s_is_conditional_branch <= (not i_bubble) when s_op_high(5 downto 0) = "110111" else '0';
+  s_is_conditional_branch <= (not s_is_noop) when s_op_high(5 downto 0) = "110111" else '0';
   s_branch_condition <= i_instr(20 downto 18);
 
   s_is_branch <= s_is_unconditional_branch or s_is_conditional_branch;
@@ -575,7 +579,7 @@ begin
   s_missing_fwd_operand <= s_is_vector_op and i_vl_fwd_use_value and not i_vl_fwd_value_ready;
 
   -- Should we discard the operation (i.e. send a bubble down the pipeline)?
-  s_bubble <= i_bubble or s_cancel or s_missing_fwd_operand or s_bubble_from_vector_op;
+  s_bubble <= s_is_noop or s_missing_fwd_operand or s_bubble_from_vector_op;
   s_reg_a_required_masked <= s_reg_a_required when s_bubble = '0' else '0';
   s_reg_b_required_masked <= s_reg_b_required when s_bubble = '0' else '0';
   s_reg_c_required_masked <= s_reg_c_required when s_bubble = '0' else '0';
@@ -684,5 +688,5 @@ begin
   end process;
 
   -- Do we need to stall the pipeline (async)?
-  o_stall <= (not (i_bubble or s_cancel)) and (s_missing_fwd_operand or s_is_vector_op_busy);
+  o_stall <= (not s_is_noop) and (s_missing_fwd_operand or s_is_vector_op_busy);
 end rtl;
