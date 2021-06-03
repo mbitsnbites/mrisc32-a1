@@ -84,6 +84,7 @@ architecture rtl of fetch is
   signal s_stall_if1 : std_logic;
 
   signal s_if1_active : std_logic;
+  signal s_if1_bubble : std_logic;
   signal s_if1_latched_pccorr_adjusted_pc : std_logic_vector(C_WORD_SIZE-1 downto 2);
   signal s_if1_latched_pccorr_adjust : std_logic;
   signal s_if1_latched_btb_target : std_logic_vector(C_WORD_SIZE-1 downto 2);
@@ -186,11 +187,22 @@ begin
   process(i_clk, i_rst)
   begin
     if i_rst = '1' then
+      s_if1_bubble <= '0';
       s_if1_active <= '0';
       s_if1_pc <= (others => '0');
       s_if1_request_is_active <= '0';
     elsif rising_edge(i_clk) then
+      -- We're active after the first cycle after reset.
       s_if1_active <= '1';
+
+      -- If we're cancelled, the IF1 stage should output bubbles until we can provide a new PC.
+      if i_cancel = '1' then
+        s_if1_bubble <= '1';
+      elsif s_stall_if1 = '0' then
+        s_if1_bubble <= '0';
+      end if;
+
+      -- Propagate state when we're not stalled.
       if s_stall_if1 = '0' then
         s_if1_pc <= s_if1_next_pc;
         s_if1_request_is_active <= s_if1_next_request_is_active;
@@ -220,21 +232,21 @@ begin
   process(i_clk, i_rst)
   begin
     if i_rst = '1' then
-      s_if2_latched_cancel <= '0';
       s_if2_latched_wb_dat <= (others => '0');
       s_if2_latched_wb_ack <= '0';
+      s_if2_latched_cancel <= '0';
     elsif rising_edge(i_clk) then
       if i_stall = '1' then
-        if i_cancel = '1' then
-          s_if2_latched_cancel <= '1';
-        end if;
         if i_wb_ack = '1' then
           s_if2_latched_wb_ack <= '1';
           s_if2_latched_wb_dat <= i_wb_dat;
         end if;
+        if i_cancel = '1' then
+          s_if2_latched_cancel <= '1';
+        end if;
       else
-        s_if2_latched_cancel <= '0';
         s_if2_latched_wb_ack <= '0';
+        s_if2_latched_cancel <= '0';
       end if;
     end if;
   end process;
@@ -246,7 +258,9 @@ begin
   -- Determine what to send to the ID stage.
   s_if2_next_pc <= s_if1_pc;
   s_if2_next_instr <= s_if2_latched_wb_dat when s_if2_latched_wb_ack = '1' else i_wb_dat;
-  s_if2_next_bubble <= i_cancel or s_if2_latched_cancel or not s_if2_has_ack;
+
+  -- Should we send out a bubble?
+  s_if2_next_bubble <= s_if1_bubble or i_cancel or s_if2_latched_cancel or not s_if2_has_ack;
 
   -- Output to the ID stage (sync).
   process(i_clk, i_rst)
